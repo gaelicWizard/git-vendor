@@ -6,7 +6,7 @@
 #
 _usage()
 {
-    cat <<EOF
+	cat <<EOF
 Usage:
   git vendor --help
   git vendor add [--prefix <dir>] <name> <repository> [<ref>]
@@ -27,6 +27,8 @@ ref="master"
 
 #default option values
 prefix="vendor"
+depth="0"
+run_dry=false
 
 while [ "$#" -gt 0 ] ; do
 	argument="$1"
@@ -56,6 +58,8 @@ while [ "$#" -gt 0 ] ; do
 			[ -n "$1" ] && [ -n "${1##--*}" ] && ref="$1" && shift
 			;;
 		"--prefix") prefix="$1" && shift ;;
+		"--depth") depth="$1" && shift ;;
+		"--dry") run_dry=true ;;
 		"--help") _usage && exit ;;
 		*) >&2 echo "error: unknown option \"$argument\"" && _usage && exit 1 ;;
 	esac
@@ -65,39 +69,44 @@ done
 
 vendor_names_from_log()
 {
-    name=
-    dir=
-    git log --grep="^git-vendor-name: .*\$" \
+	name=
+	dir=
+	git log --grep="^git-vendor-name: .*\$" \
 	--pretty=format:'START %H%n%s%n%n%b%nEND%n' HEAD |
 	while read a b junk; do
-	    case "$a" in
+		case "$a" in
 		START) ;;
 		git-vendor-name:) name="$b" ;;
-                git-vendor-dir:) dir="$b" ;;
+				git-vendor-dir:) dir="$b" ;;
 		END)
-                    # Only consider dependencies which still exist on disk
-                    if [ -d "$dir" ]; then
-                        echo "$name"
-                    fi
-                    name=
-                    dir=
-                    ;;
-	    esac
+					# Only consider dependencies which still exist on disk
+					if [ -d "$dir" ]; then
+						echo "$name"
+					fi
+					name=
+					dir=
+					;;
+		esac
 	done | sort -u
 }
 
 vendor_git_log_first()
 {
-    name="$1"
-    git log -1 --grep="^git-vendor-name: $name\$" --pretty=format:'START %H%n%s%n%n%b%nEND%n' HEAD
+	name="$1"
+	git log -1 --grep="^git-vendor-name: $name\$" --pretty=format:'START %H%n%s%n%n%b%nEND%n' HEAD
 }
 
 cmd_add()
 {
-    require_clean_work_tree
+	require_clean_work_tree
 
-    dir="$prefix/$(echo "$repository" | sed -E 's/^[a-zA-Z]+((:\/\/)|@)//' | sed 's/:/\//' | sed -E 's/\.git$//')"
-    message="\
+	subdir="$(echo "$repository" | sed -E 's/^[a-zA-Z]+((:\/\/)|@)//' | sed 's/:/\//' | sed -E 's/\.git$//')"
+	if [ $depth -gt 0 ]; then
+		subdir="$(echo "$subdir" | sed -e 's/\//\n/g' | sed -n -e "$depth,$ p" | sed ':a;N;$!ba;s/\n/\//g')"
+	fi
+
+	dir="$prefix/$subdir"
+	message="\
 Add \"$name\" from \"$repository@$ref\"
 
 git-vendor-name: $name
@@ -105,66 +114,70 @@ git-vendor-dir: $dir
 git-vendor-repository: $repository
 git-vendor-ref: $ref
 "
-    set -x
-    git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+	set -x
+	if [ "$run_dry" = false ] ; then
+		git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+	else
+		echo Would run: git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+	fi
 }
 
 cmd_list()
 {
-    for name in $(vendor_names_from_log);
-    do
-        vendor_git_log_first "$name" |
-	    while read a b junk; do
-	        case "$a" in
-		    START) commit="$b" ;;
-                    git-vendor-name:) name="$b" ;;
-                    git-vendor-dir:) dir="$b" ;;
-                    git-vendor-ref:) ref="$b" ;;
-		    git-vendor-repository:) repository="$b" ;;
-		    END)
-                        if [ ! -z "$repository" ];
-                        then
-                            if [ -z "$show_only" -o "$show_only" = "$name" ]; then
-                                printf "$name@$ref:\n"
-                                printf "\tname:\t$name\n"
-                                printf "\tdir:\t$dir\n"
-                                printf "\trepo:\t$repository\n"
-                                printf "\tref:\t$ref\n"
-                                printf "\tcommit:\t$commit\n"
-                                printf "\n"
-                            fi
-                        fi
-                        name=
-                        dir=
-                        ref=
-                        commit=
-                        repository=
-                        ;;
-	        esac
-	    done
-    done;
+	for name in $(vendor_names_from_log);
+	do
+		vendor_git_log_first "$name" |
+		while read a b junk; do
+			case "$a" in
+			START) commit="$b" ;;
+					git-vendor-name:) name="$b" ;;
+					git-vendor-dir:) dir="$b" ;;
+					git-vendor-ref:) ref="$b" ;;
+			git-vendor-repository:) repository="$b" ;;
+			END)
+						if [ ! -z "$repository" ];
+						then
+							if [ -z "$show_only" -o "$show_only" = "$name" ]; then
+								printf "$name@$ref:\n"
+								printf "\tname:\t$name\n"
+								printf "\tdir:\t$dir\n"
+								printf "\trepo:\t$repository\n"
+								printf "\tref:\t$ref\n"
+								printf "\tcommit:\t$commit\n"
+								printf "\n"
+							fi
+						fi
+						name=
+						dir=
+						ref=
+						commit=
+						repository=
+						;;
+			esac
+		done
+	done;
 
 }
 
 cmd_update()
 {
-    require_clean_work_tree
+	require_clean_work_tree
 
-    vendor_git_log_first "$name" |
+	vendor_git_log_first "$name" |
 	while read a b junk; do
-	    case "$a" in
+		case "$a" in
 		START) ;;
-                git-vendor-dir:) dir="$b" ;;
+				git-vendor-dir:) dir="$b" ;;
 		git-vendor-repository:) repository="$b" ;;
 		END)
-                    # Make sure the dependency exists on disk
-                    if [ ! -d "$dir" ]; then
-                        die "Dependency \"$1\" is missing from \"$dir\""
-                    fi
+					# Make sure the dependency exists on disk
+					if [ ! -d "$dir" ]; then
+						die "Dependency \"$1\" is missing from \"$dir\""
+					fi
 
-                    if [ ! -z "$repository" ];
-                    then
-                        message="\
+					if [ ! -z "$repository" ];
+					then
+						message="\
 Update \"$name\" from \"$repository@$ref\"
 
 git-vendor-name: $name
@@ -172,33 +185,42 @@ git-vendor-dir: $dir
 git-vendor-repository: $repository
 git-vendor-ref: $ref
 "
-                        git subtree pull --prefix "$dir" --message "$message" "$repository" "$ref" --squash
-                        break
-                    fi
-                    ;;
-	    esac
+						if [ "$run_dry" = false ] ; then
+							git subtree pull --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+						else
+							echo Would run: git subtree pull --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+						fi
+						break
+					fi
+					;;
+		esac
 	done
 }
 
 cmd_remove()
 {
-    require_clean_work_tree
+	require_clean_work_tree
 
-    vendor_git_log_first "$name" |
+	vendor_git_log_first "$name" |
 	while read a b junk; do
-	    case "$a" in
+		case "$a" in
 		START) ;;
-                git-vendor-dir:) dir="$b" ;;
+				git-vendor-dir:) dir="$b" ;;
 		END)
-                    # Make sure the dependency exists
-                    if [ ! -d "$dir" ]; then
-                        die "Dependency \"$1\" is missing from \"$dir\""
-                    fi
-                    git rm -rf "$dir"
-                    git commit --message "Removing \"$name\" from \"$dir\""
-                    break
-                    ;;
-	    esac
+					# Make sure the dependency exists
+					if [ ! -d "$dir" ]; then
+						die "Dependency \"$1\" is missing from \"$dir\""
+					fi
+					if [ "$run_dry" = false ] ; then
+						git rm -rf "$dir"
+						git commit --message "Removing \"$name\" from \"$dir\""
+					else
+						echo Would run: git rm -rf "$dir"
+						echo Would run: git commit --message "Removing \"$name\" from \"$dir\""
+					fi
+					break
+					;;
+		esac
 	done
 }
 
