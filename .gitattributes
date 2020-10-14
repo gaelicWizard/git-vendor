@@ -1,0 +1,7 @@
+# Declare files that should always have LF (unix) line endings after checkout.
+*.sh text eol=lf
+*.yml text eol=lf
+bin/git-vendor text eol=lf
+
+# Declare files that should always have CRLF (windows) line endings after checkout.
+*.bat text eol=crlf
