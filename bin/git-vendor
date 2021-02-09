@@ -8,17 +8,18 @@ _usage()
 {
 	cat <<EOF
 Usage:
-  git vendor --help
-  git vendor add [--prefix <dir>] <name> <repository> [<ref>]
-  git vendor list [<name>]
-  git vendor remove <name>
-  git vendor update <name> [<ref>]
+  git lender add [--prefix <dir>] <name> <repository> [<ref>]
+  git lender list [<name>]
+  git lender remove <name>
+  git lender update <name> [<ref>]
+  git lender <command> --help
 EOF
 }
 
-PATH=$PATH:$(git --exec-path)
-. git-sh-setup
+# shellcheck disable=SC1090
+. "$(git --exec-path)"/git-sh-setup
 require_work_tree
+require_work_tree_exists
 
 [ "$#" -eq 0 ] && _usage && exit 1
 
@@ -28,12 +29,12 @@ ref="master"
 #default option values
 prefix="vendor"
 depth="0"
-run_dry=false
+dry_run=false
+debug=false
 
 while [ "$#" -gt 0 ] ; do
 	argument="$1"
 	shift
-
 	case "$argument" in
 		"add")
 			[ $# -lt 2 ] && die "Incorrect options provided: git vendor add <name> <repository> [<ref>]" && exit 1
@@ -59,13 +60,14 @@ while [ "$#" -gt 0 ] ; do
 			;;
 		"--prefix") prefix="$1" && shift ;;
 		"--depth") depth="$1" && shift ;;
-		"--dry") run_dry=true ;;
+		"--dry-run") dry_run=true ;;
+		"--debug") debug=true ;;
 		"--help") _usage && exit ;;
 		*) >&2 echo "error: unknown option \"$argument\"" && _usage && exit 1 ;;
 	esac
 done
 
-[ -z $command ] && _usage && exit 1
+[ -z "$command" ] && _usage && exit 1
 
 vendor_names_from_log()
 {
@@ -96,6 +98,15 @@ vendor_git_log_first()
 	git log -1 --grep="^git-vendor-name: $name\$" --pretty=format:'START %H%n%s%n%n%b%nEND%n' HEAD
 }
 
+call() {
+	if [ "$debug" = "true" ]; then
+		echo "$@"
+	fi
+	if [ "$dry_run" != "true" ]; then
+		"$@"
+	fi
+}
+
 cmd_add()
 {
 	require_clean_work_tree
@@ -107,19 +118,27 @@ cmd_add()
 
 	dir="$prefix/$subdir"
 	message="\
-Add \"$name\" from \"$repository@$ref\"
+    Add \"$name\" from \"$repository@$ref\"
 
 git-vendor-name: $name
 git-vendor-dir: $dir
 git-vendor-repository: $repository
 git-vendor-ref: $ref
 "
-	set -x
-	if [ "$run_dry" = false ] ; then
-		git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
-	else
-		echo Would run: git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
-	fi
+	branch_name=$(git check-ref-format --branch "$(git rev-parse --abbrev-ref HEAD)-$(git log -n 1 --format=%h)-$(date +%s)")
+	call git checkout -b "$branch_name"
+	call git subtree add --prefix "$dir" --message "$message" "$repository" "$ref" --squash
+
+	call git checkout "$(git log -2 --format=%h | tail -n 1)"
+	call mkdir -p "$dir"
+	call mv -t "$dir" *
+	call git add -A
+	call git commit --message "$message" --amend
+	commit_hash=$(git log -1 --format=%H)
+	call git checkout "$(echo "$branch_name" | cut -d- -f1)"
+	call git cherry-pick "$commit_hash"
+	call git branch -D "$branch_name"
+
 }
 
 cmd_list()
@@ -178,24 +197,35 @@ cmd_update()
 					if [ ! -z "$repository" ];
 					then
 						message="\
-Update \"$name\" from \"$repository@$ref\"
+    Update \"$name\" from \"$repository@$ref\"
 
 git-vendor-name: $name
 git-vendor-dir: $dir
 git-vendor-repository: $repository
 git-vendor-ref: $ref
 "
-						if [ "$run_dry" = false ] ; then
-							git subtree pull --prefix "$dir" --message "$message" "$repository" "$ref" --squash
-						else
-							echo Would run: git subtree pull --prefix "$dir" --message "$message" "$repository" "$ref" --squash
-						fi
+
+						branch_name=$(git check-ref-format --branch "$(git rev-parse --abbrev-ref HEAD)-$(git log -n 1 --format=%h)-$(date +%s)")
+						call git checkout -b "$branch_name"
+						call git subtree add --prefix "$dir/update" --message "$message" "$repository" "$ref" --squash
+
+						call git checkout "$(git log -2 --format=%h | tail -n 1)"
+						call mkdir -p "$dir"
+						call mv -t "$dir" *
+						call git add -A
+						call git commit --message "$message" --amend
+						commit_hash=$(git log -1 --format=%H)
+						call git checkout "$(echo "$branch_name" | cut -d- -f1)"
+						call git cherry-pick --strategy=recursive -X theirs "$commit_hash"
+						call git branch -D "$branch_name"
+
 						break
 					fi
 					;;
 		esac
 	done
 }
+
 
 cmd_remove()
 {
@@ -211,13 +241,8 @@ cmd_remove()
 					if [ ! -d "$dir" ]; then
 						die "Dependency \"$1\" is missing from \"$dir\""
 					fi
-					if [ "$run_dry" = false ] ; then
-						git rm -rf "$dir"
-						git commit --message "Removing \"$name\" from \"$dir\""
-					else
-						echo Would run: git rm -rf "$dir"
-						echo Would run: git commit --message "Removing \"$name\" from \"$dir\""
-					fi
+					call git rm -rf "$dir"
+					call git commit --message "    Removing \"$name\" from \"$dir\""
 					break
 					;;
 		esac
