@@ -131,7 +131,7 @@ git-vendor-ref: $ref
 
 	call git checkout "$(git log -2 --format=%h | tail -n 1)"
 	call mkdir -p "$dir"
-	call mv -t "$dir" *
+	call mv -f "$dir" *
 	call git add -A
 	call git commit --message "$message" --amend
 	commit_hash=$(git log -1 --format=%H)
@@ -211,7 +211,7 @@ git-vendor-ref: $ref
 
 						call git checkout "$(git log -2 --format=%h | tail -n 1)"
 						call mkdir -p "$dir"
-						call mv -t "$dir" *
+						call mv -f "$dir" *
 						call git add -A
 						call git commit --message "$message" --amend
 						commit_hash=$(git log -1 --format=%H)
